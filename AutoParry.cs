@@ -9,15 +9,15 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.UI;
 
-[assembly: AssemblyVersion("0.1.1.0")]
-[assembly: AssemblyFileVersion("0.1.1.0")]
+[assembly: AssemblyVersion("0.1.2.0")]
+[assembly: AssemblyFileVersion("0.1.2.0")]
 
 namespace SephiriaAutoParry
 {
-    [BepInPlugin("local.sephiria.autoparry", "Sephiria Auto Parry", "0.1.1")]
+    [BepInPlugin("local.sephiria.autoparry", "Sephiria Auto Parry", "0.1.2")]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Version = "0.1.1";
+        public const string Version = "0.1.2";
         private static readonly GuardThreatSelection guardThreat = new GuardThreatSelection();
         private static int guardThreatFrame = -1;
         private static Vector2 requestedGuardDirection;
@@ -108,7 +108,6 @@ namespace SephiriaAutoParry
         private static readonly FieldInfo BladeStuck = AccessTools.Field(typeof(WeaponSimple_Katana), "isBladeStuck");
         private static readonly FieldInfo QuickDrawRunning = AccessTools.Field(typeof(WeaponSimple_Katana), "isQuickDrawAnimationRunning");
         private static readonly FieldInfo QuickDrawWaiting = AccessTools.Field(typeof(WeaponSimple_Katana), "isWaitQuickDrawAnimation");
-        private static int reports;
         internal static bool Defend(string threat, float timeToImpact, Vector2 incomingDirection)
         {
             var player = Player;
@@ -218,9 +217,9 @@ namespace SephiriaAutoParry
             var ticket = weapon.GetComponent<ActionTicket>();
             ticket.Controller = controller;
             ticket.ReleaseShield = shield != null;
-            if (reports++ < 40)
-                Log(action + " queued BEFORE " + threat + "; predicted lead=" + timeToImpact.ToString("F3") +
-                    "s; MP before native animation=" + unit.MP);
+            string trace = action + " queued BEFORE " + threat + "; predicted lead=" + timeToImpact.ToString("F3") +
+                "s; MP before native animation=" + unit.MP;
+            CombatTrace.Record(trace);
             return true;
         }
         private static void TryForceCancel(WeaponSimple weapon)
@@ -333,7 +332,8 @@ namespace SephiriaAutoParry
                 try { katana.SubAttackButtonDown(); }
                 finally { Plugin.SyntheticInput = false; }
             }
-            Plugin.Log("Automatic special did not enter its animation before impact; pending input cancelled");
+            CombatTrace.Record("Unstarted automatic special cancelled; weapon=" + requestedWeapon.GetType().Name +
+                "; elapsed=" + (Time.time - QueuedAt).ToString("F3"));
         }        private void Update()
         {
             if (!Started && !Cancelled && Time.time - QueuedAt < 0.65f)
@@ -805,29 +805,27 @@ namespace SephiriaAutoParry
     [HarmonyPatch(typeof(WeaponControllerSimple), "StartFuryInvincible")]
     internal static class FuryWindowObservation
     {
-        private static int reports;
         private static void Postfix(WeaponControllerSimple __instance, float time)
         {
-            if (reports >= 30 || __instance.unitAvatar != Plugin.Player ||
+            if (__instance.unitAvatar != Plugin.Player ||
                 !ActionTicket.IsRecent(__instance.currentWeapon)) return;
-            reports++;
-            Plugin.Log("Native Fury/counter window opened; elapsed=" +
+            string trace = "Native Fury/counter window opened; elapsed=" +
                 (Time.time - __instance.currentWeapon.GetComponent<ActionTicket>().QueuedAt).ToString("F3") +
-                "; duration=" + time.ToString("F3"));
+                "; duration=" + time.ToString("F3");
+            CombatTrace.Record(trace);
         }
     }
     [HarmonyPatch(typeof(WeaponControllerSimple), "StartParryInvincible")]
     internal static class ParryWindowObservation
     {
-        private static int reports;
         private static void Postfix(WeaponControllerSimple __instance, float time)
         {
-            if (reports >= 30 || __instance.unitAvatar != Plugin.Player ||
+            if (__instance.unitAvatar != Plugin.Player ||
                 !ActionTicket.IsRecent(__instance.currentWeapon)) return;
-            reports++;
-            Plugin.Log("Native parry window opened; elapsed=" +
+            string trace = "Native parry window opened; elapsed=" +
                 (Time.time - __instance.currentWeapon.GetComponent<ActionTicket>().QueuedAt).ToString("F3") +
-                "; duration=" + time.ToString("F3"));
+                "; duration=" + time.ToString("F3");
+            CombatTrace.Record(trace);
         }
     }
     // Last-chance input for every external hit source, including traps and explosions.
@@ -860,23 +858,6 @@ namespace SephiriaAutoParry
             if (__instance == Plugin.Player && damage != null && !damage.isSystemDamage && damage.damage > 0f)
                 Plugin.LastDamageFrame = Time.frameCount;
         }    }
-    // Read-only diagnostic: the game's result is never changed.
-    [HarmonyPatch(typeof(UnitAvatar), "ApplyDamage")]
-    internal static class DamageObservation
-    {
-        private static int reports;
-        private static void Prefix(UnitAvatar __instance, out int __state) { __state = __instance.parryInvincibleApplied; }
-        private static void Postfix(UnitAvatar __instance, EApplyDamageResult __result, int __state)
-        {
-            if (__instance != Plugin.Player || reports >= 40) return;
-            var controller = __instance.GetComponent<WeaponControllerSimple>();
-            if (!controller || !ActionTicket.IsRecent(controller.currentWeapon)) return;
-            reports++;
-            Plugin.Log("Native impact AFTER queued action: result=" + __result + "; MP=" + __instance.MP +
-                "; elapsed=" + (Time.time - controller.currentWeapon.GetComponent<ActionTicket>().QueuedAt).ToString("F3") +
-                "; parryStateBeforeImpact=" + __state);
-        }
-    }
     [HarmonyPatch(typeof(UI_OptionsPanel), "OnOpened")]
     internal static class OptionsPatch
     {

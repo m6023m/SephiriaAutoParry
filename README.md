@@ -1,4 +1,4 @@
-# Sephiria Auto Parry 0.1.1
+# Sephiria Auto Parry 0.1.2
 
 저장소: https://github.com/m6023m/SephiriaAutoParry
 
@@ -37,11 +37,13 @@
 ## 설치 및 설정
 
 1. 게임을 종료하고 BepInEx 5가 설치되어 있는지 확인합니다.
-2. Releases의 `SephiriaAutoParry-0.1.1.zip`을 게임 폴더에 풀어 `BepInEx` 폴더를 합칩니다.
+2. Releases의 `SephiriaAutoParry-0.1.2.zip`을 게임 폴더에 풀어 `BepInEx` 폴더를 합칩니다.
 3. `BepInEx/plugins/SephiriaAutoParry.dll`과 `BepInEx/patchers/SephiriaAutoParry.Updater.dll`이 있어야 합니다.
 4. 옵션 → 게임플레이 → 마법 시전 입력 동작 아래에서 자동 패링과 업데이트를 설정합니다.
 
 설정 파일은 `BepInEx/config/local.sephiria.autoparry.cfg`입니다. 업데이트로 기존 설정을 지우지 않습니다. 제거할 때는 게임 종료 후 위의 플러그인과 업데이트 적용기 DLL을 함께 제거합니다.
+
+최근 50개 전투 이벤트는 `BepInEx/cache/SephiriaAutoParry/combat-latest.log`에 덮어써서 보관합니다. HP 손실 시 최대 초당 한 번 갱신하며, 치명타격 때에는 즉시 저장하고 `BepInEx/LogOutput.log`에도 출력합니다. 공격원·공격 객체·공격 방향·무기·HP/MP·방어/입력 상태를 기록하며, 진단용 기록은 외부로 전송하지 않습니다. 사망한 실행의 로그는 다음 게임 시작 전에 복사해 보관하세요.
 
 ## 자동 업데이트
 
