@@ -83,14 +83,15 @@ namespace SephiriaAutoParry.Updates
 
         private static void Download(string url, Stream destination, long limit)
         {
+            // Set TLS before creating the request/service point (required by older .NET defaults).
+            // Never disable certificate validation.
+            ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
             var request = (HttpWebRequest)WebRequest.Create(url);
             request.UserAgent = "SephiriaAutoParry-Updater/1";
             request.Accept = "application/vnd.github+json";
             request.Timeout = 20000;
             request.ReadWriteTimeout = 20000;
-            // Unity Mono supports TLS 1.2; never disable certificate validation.
             request.ServicePoint.Expect100Continue = false;
-            ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
             using (var response = (HttpWebResponse)request.GetResponse())
             using (var input = response.GetResponseStream())
             {
