@@ -146,7 +146,7 @@ namespace SephiriaAutoParry
                 // Let the real sheath/draw sequence finish its state-changing events.
                 // Cancelling it and reconstructing only some flags can leave attacks locked.
                 if (katana.isSheathAnimationRunning || (bool)QuickDrawRunning.GetValue(katana) ||
-                    (bool)QuickDrawWaiting.GetValue(katana) || controller.animator.IsInTransition(0))
+                    (bool)QuickDrawWaiting.GetValue(katana))
                     return false;
                 var type = katana.sheathActionType;
                 if (type != WeaponSimple_Katana.ESheathActionType.Sheath &&
@@ -156,6 +156,9 @@ namespace SephiriaAutoParry
                     return false;
                 if (type == WeaponSimple_Katana.ESheathActionType.Sheath)
                 {
+                    // Native sheath/draw protection lasts 0.125s. A 0.16s prediction
+                    // can expire before contact; keep observing until closer to the impact.
+                    if (timeToImpact > 0.075f) return false;
                     bool guard = controller.animator.GetBool(AnimHashContainer.Instance.GuardHash);
                     // Flags can briefly disagree until the next animation event. Do not toggle then.
                     if (katana.isBladeSheathed != guard || katana.sheathStateEnabled != guard) return false;
