@@ -1,0 +1,13 @@
+dist/
+backup/
+evidence/
+verification.md
+*.dll
+*.exe
+*.pdb
+*.zip
+*.log
+*.cfg
+*.user
+obj/
+bin/
