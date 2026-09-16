@@ -9,15 +9,18 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.UI;
 
-[assembly: AssemblyVersion("0.1.0.0")]
-[assembly: AssemblyFileVersion("0.1.0.0")]
+[assembly: AssemblyVersion("0.1.1.0")]
+[assembly: AssemblyFileVersion("0.1.1.0")]
 
 namespace SephiriaAutoParry
 {
-    [BepInPlugin("local.sephiria.autoparry", "Sephiria Auto Parry", "0.1.0")]
+    [BepInPlugin("local.sephiria.autoparry", "Sephiria Auto Parry", "0.1.1")]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Version = "0.1.0";
+        public const string Version = "0.1.1";
+        private static readonly GuardThreatSelection guardThreat = new GuardThreatSelection();
+        private static int guardThreatFrame = -1;
+        private static Vector2 requestedGuardDirection;
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> ForceCancel;
         internal static Plugin Instance;
@@ -29,6 +32,14 @@ namespace SephiriaAutoParry
             TryForceCancel(weapon);
             var ticket = ActionTicket.Arm(weapon);
             ticket.CaptureBeforeInput(controller);
+            ticket.GuardDirection = weapon is WeaponSimple_SwordAndShield || weapon is WeaponSimple_QuartterStaff ?
+                requestedGuardDirection : Vector2.zero;
+            var originalAim = controller.aimedPositionClientside;
+            if (ticket.GuardDirection.sqrMagnitude > 0f)
+            {
+                controller.aimedPositionClientside = controller.transform.position + (Vector3)(ticket.GuardDirection * 10f);
+                controller.Aim(controller.aimedPositionClientside);
+            }
             SyntheticInput = true;
             try
             {
@@ -36,7 +47,7 @@ namespace SephiriaAutoParry
                 // Observe only; the game's normal animator update decides when input starts.
                 ticket.EvaluateStart();
             }
-            finally { SyntheticInput = false; }
+            finally { SyntheticInput = false; controller.aimedPositionClientside = originalAim; }
         }
         internal static void ReleaseSpecial(WeaponSimple weapon)
         {
@@ -98,7 +109,38 @@ namespace SephiriaAutoParry
         private static readonly FieldInfo QuickDrawRunning = AccessTools.Field(typeof(WeaponSimple_Katana), "isQuickDrawAnimationRunning");
         private static readonly FieldInfo QuickDrawWaiting = AccessTools.Field(typeof(WeaponSimple_Katana), "isWaitQuickDrawAnimation");
         private static int reports;
-        internal static bool Defend(string threat, float timeToImpact)
+        internal static bool Defend(string threat, float timeToImpact, Vector2 incomingDirection)
+        {
+            var player = Player;
+            var controller = player ? player.GetComponent<WeaponControllerSimple>() : null;
+            bool directional = controller && (controller.currentWeapon is WeaponSimple_SwordAndShield ||
+                controller.currentWeapon is WeaponSimple_QuartterStaff);
+            if (directional && timeToImpact > 0f && incomingDirection.sqrMagnitude > 0f)
+            {
+                if (!Enabled.Value || Time.frameCount == LastDamageFrame || player.IsDead || player.isGuardEnabled ||
+                    ActionTicket.IsPending(controller.currentWeapon)) return false;
+                if (guardThreatFrame != Time.frameCount) { guardThreat.Clear(); guardThreatFrame = Time.frameCount; }
+                guardThreat.Offer(Time.time + timeToImpact, incomingDirection.x, incomingDirection.y, threat);
+                // Detectors keep observing; selection is resolved after all Update callbacks.
+                return false;
+            }
+            requestedGuardDirection = directional ? incomingDirection.normalized : Vector2.zero;
+            try { return DefendNow(threat, timeToImpact); }
+            finally { requestedGuardDirection = Vector2.zero; }
+        }
+        private void LateUpdate()
+        {
+            if (guardThreatFrame != Time.frameCount || !guardThreat.HasValue) return;
+            requestedGuardDirection = new Vector2(guardThreat.X, guardThreat.Y);
+            try
+            {
+                // Never replay a forecast after its predicted contact time.
+                if (guardThreat.Deadline > Time.time && Time.frameCount != LastDamageFrame)
+                    DefendNow(guardThreat.Threat, guardThreat.Deadline - Time.time);
+            }
+            finally { guardThreat.Clear(); requestedGuardDirection = Vector2.zero; }
+        }
+        private static bool DefendNow(string threat, float timeToImpact)
         {
             var unit = Player;
             if (Time.frameCount == LastDamageFrame || !Enabled.Value || !unit || !unit.isServer || !unit.isOwned || unit.IsDead ||
@@ -199,11 +241,27 @@ namespace SephiriaAutoParry
     {
         internal float Until, QueuedAt, PendingUntil;
         internal bool ReleaseShield, Started, Cancelled;
+        internal Vector2 GuardDirection;
+        private bool guardAimStarted;
         private int ownedTrigger;
         private bool guardBefore;
         private WeaponSimple requestedWeapon;
 
         internal WeaponControllerSimple Controller;
+        internal bool TryGetGuardAim(out Vector3 point)
+        {
+            point = Vector3.zero;
+            if (!Plugin.Enabled.Value || Cancelled || !Controller || Controller.currentWeapon != requestedWeapon ||
+                !Controller.unitAvatar || Controller.unitAvatar.IsDead || GuardDirection.sqrMagnitude < 0.0001f)
+                return false;
+            float aimUntil = requestedWeapon is WeaponSimple_QuartterStaff ? QueuedAt + 3f : Until;
+            if (Controller.unitAvatar.isGuardEnabled) guardAimStarted = true;
+            if (guardAimStarted && !Controller.unitAvatar.isGuardEnabled) return false;
+            if (Time.time >= aimUntil || (Started && !Controller.unitAvatar.isGuardEnabled &&
+                Controller.currentWeaponSwing < 10) || (!Started && Time.time >= PendingUntil)) return false;
+            point = Controller.transform.position + (Vector3)(GuardDirection * 10f);
+            return true;
+        }
 
         internal static bool IsPending(WeaponSimple weapon)
         {
@@ -222,6 +280,7 @@ namespace SephiriaAutoParry
             ticket.Started = false;
             ticket.Cancelled = false;
             ticket.ReleaseShield = false;
+            ticket.guardAimStarted = false;
             ticket.QueuedAt = Time.time;
             ticket.PendingUntil = Time.time + 0.12f;
             ticket.Until = Time.time + 0.45f;
@@ -298,6 +357,18 @@ namespace SephiriaAutoParry
             if (ticket) ticket.ReleaseShield = false;
         }
     }
+    // Change the native visual/aim input, never the guard result or guard angle.
+    [HarmonyPatch(typeof(WeaponControllerSimple), "Aim")]
+    internal static class AutomaticGuardAim
+    {
+        private static void Prefix(WeaponControllerSimple __instance, ref Vector2 aimPoint)
+        {
+            if (!__instance.currentWeapon) return;
+            var ticket = __instance.currentWeapon.GetComponent<ActionTicket>();
+            Vector3 automaticAim;
+            if (ticket && ticket.TryGetGuardAim(out automaticAim)) aimPoint = automaticAim;
+        }
+    }
     [HarmonyPatch]
     internal static class ManualSpecialInput
     {
@@ -341,7 +412,9 @@ namespace SephiriaAutoParry
                 overlaps = Mathf.Abs(local.x) <= Size.x * 0.5f + 0.25f &&
                     Mathf.Abs(local.y) <= Size.y * 0.5f + 0.25f;
             }
-            if (overlaps && Plugin.Defend(Source, remaining)) Fired = true;
+            Vector2 incoming = Center - (Vector2)player.transform.position;
+            if (Forward) incoming = -(Vector2)(Quaternion.Euler(0f, 0f, Angle) * Vector2.up);
+            if (overlaps && Plugin.Defend(Source, remaining, incoming)) Fired = true;
         }
     }
 
@@ -435,7 +508,8 @@ namespace SephiriaAutoParry
                         (Vector2)targetBounds.extents + (Vector2)bulletBounds.extents, velocity));
                 }
             }
-            if (impact >= 0f && impact <= 0.16f && Plugin.Defend("projectile hitbox", impact)) fired = true;
+            Vector2 incoming = velocity.sqrMagnitude > 0.0001f ? -velocity : position - (Vector2)player.transform.position;
+            if (impact >= 0f && impact <= 0.16f && Plugin.Defend("projectile hitbox", impact, incoming)) fired = true;
         }
         // Swept bounds use the same body-space coordinates as Bullet's native overlap.
         // This avoids predicting against the feet when the bullet hits the upper body.
@@ -547,7 +621,7 @@ namespace SephiriaAutoParry
                     delta.y *= 2f;
                     if (delta.sqrMagnitude > radius * radius) continue;
                 }
-                if (Plugin.Defend("delayed explosion", lead)) fired = true;
+                if (Plugin.Defend("delayed explosion", lead, center - (Vector2)player.transform.position)) fired = true;
                 return;
             }
         }
@@ -644,7 +718,7 @@ namespace SephiriaAutoParry
                     float lead = ((ev.frame - frame) / (float)state.fps - timer.GetTimer()) / speed;
                     if (ev.frame <= frame || lead <= 0f || lead > 0.16f) continue;
                     if (ev.events.Any(e => AttackCallback.IsAttack(animator.eventPerformer.transform, e.componentName, e.methodName)) &&
-                        Plugin.Defend(enemy.GetType().Name + " attack preparation", lead)) return;
+                        Plugin.Defend(enemy.GetType().Name + " attack preparation", lead, enemy.transform.position - player.transform.position)) return;
                 }
                 var registered = Events.GetValue(animator) as Dictionary<AnimationSet.StateInfo, Dictionary<int, Action>>;
                 Dictionary<int, Action> callbacks;
@@ -654,7 +728,7 @@ namespace SephiriaAutoParry
                     float lead = ((ev.Key - frame) / (float)state.fps - timer.GetTimer()) / speed;
                     if (ev.Key <= frame || lead <= 0f || lead > 0.16f || ev.Value == null) continue;
                     if (ev.Value.GetInvocationList().Any(d => AttackCallback.IsAttack(d.Method)) &&
-                        Plugin.Defend(enemy.GetType().Name + " registered attack preparation", lead)) return;
+                        Plugin.Defend(enemy.GetType().Name + " registered attack preparation", lead, enemy.transform.position - player.transform.position)) return;
                 }
             }
             foreach (var animator in unityAnimators)
@@ -682,7 +756,7 @@ namespace SephiriaAutoParry
                             foreach (var component in animator.GetComponents<MonoBehaviour>())
                             {
                                 if (component && AttackCallback.IsAttack(AccessTools.Method(component.GetType(), ev.functionName)) &&
-                                    Plugin.Defend(enemy.GetType().Name + " animation attack preparation", lead)) return;
+                                    Plugin.Defend(enemy.GetType().Name + " animation attack preparation", lead, enemy.transform.position - player.transform.position)) return;
                             }
                         }
                     }
@@ -722,7 +796,7 @@ namespace SephiriaAutoParry
                     !frameEvent.events.Any(e => e.methodName == "FireBulletAnimation")) continue;
                 float untilFire = (frameEvent.frame - frame) / (float)state.fps - timer.GetTimer();
                 if (untilFire > 0f && untilFire <= 0.16f)
-                    Plugin.Defend("launcher BEFORE projectile spawn", untilFire);
+                    Plugin.Defend("launcher BEFORE projectile spawn", untilFire, -direction);
                 break;
             }
         }
@@ -771,7 +845,10 @@ namespace SephiriaAutoParry
             if (damage.origin is UnitAvatar &&
                 !CombatManager.ContainsAttackableFaction(damage.targetFactionLayers, __instance.faction))
                 return;
-            Plugin.Defend("incoming hit input (" + damage.fromType + "/" + damage.damageType + ")", 0f);
+            Vector2 incoming = -damage.direction;
+            if (incoming.sqrMagnitude < 0.0001f && damage.origin)
+                incoming = damage.origin.transform.position - __instance.transform.position;
+            Plugin.Defend("incoming hit input (" + damage.fromType + "/" + damage.damageType + ")", 0f, incoming);
             var controller = __instance.GetComponent<WeaponControllerSimple>();
             var ticket = controller && controller.currentWeapon ?
                 controller.currentWeapon.GetComponent<ActionTicket>() : null;

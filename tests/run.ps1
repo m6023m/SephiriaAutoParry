@@ -17,6 +17,11 @@ if ($LASTEXITCODE) { throw 'Updater test build failed' }
 & $exe $testRoot (Join-Path $testRoot '0.0.0\SephiriaAutoParry.dll') (Join-Path $testRoot '0.1.0\SephiriaAutoParry.dll')
 if ($LASTEXITCODE) { throw 'Updater tests failed' }
 $callbackExe = Join-Path $testRoot 'CallbackTests.exe'
+$guardExe = Join-Path $testRoot 'GuardThreatTests.exe'
+& $compiler /nologo ('/out:' + $guardExe) (Join-Path $PSScriptRoot '..\GuardThreatSelection.cs') (Join-Path $PSScriptRoot 'GuardThreatTests.cs')
+if ($LASTEXITCODE) { throw 'Guard test build failed' }
+& $guardExe
+if ($LASTEXITCODE) { throw 'Guard tests failed' }
 & $compiler /nologo ('/out:' + $callbackExe) (Join-Path $PSScriptRoot 'CallbackTests.cs')
 if ($LASTEXITCODE) { throw 'Callback test build failed' }
 & $callbackExe $GameDir (Join-Path $PSScriptRoot '..\dist')

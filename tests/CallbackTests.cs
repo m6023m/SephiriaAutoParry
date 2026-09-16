@@ -46,7 +46,7 @@ class CallbackTests
         if(plugin.GetType("SephiriaAutoParry.IncomingAttackInput").GetMethod("Postfix", BindingFlags.NonPublic|BindingFlags.Static) != null)
             throw new Exception("Automatic input must not execute in a damage postfix.");
         Console.WriteLine("Pre-damage input/cancellation order checks passed.");
-        var defend = plugin.GetType("SephiriaAutoParry.Plugin").GetMethod("Defend", BindingFlags.NonPublic | BindingFlags.Static);
+        var defend = plugin.GetType("SephiriaAutoParry.Plugin").GetMethod("DefendNow", BindingFlags.NonPublic | BindingFlags.Static);
         foreach (var instruction in (System.Collections.IEnumerable)reader.Invoke(null, new object[] { defend, null })) {
             var operand = instruction.GetType().GetField("operand").GetValue(instruction) as MethodBase;
             if (operand != null && (operand.Name == "set_NetworkisBladeSheathed" || operand.Name == "set_NetworksheathStateEnabled"))
@@ -63,6 +63,11 @@ class CallbackTests
             }
         }
         Console.WriteLine("No forced animator evaluation; action cancellation is isolated to the opt-in helper.");
+        var nativeAim = game.GetType("WeaponControllerSimple").GetMethod("Aim");
+        var aimPatch = plugin.GetType("SephiriaAutoParry.AutomaticGuardAim").GetMethod("Prefix", BindingFlags.NonPublic | BindingFlags.Static);
+        if (aimPatch.GetParameters()[1].ParameterType != nativeAim.GetParameters()[0].ParameterType.MakeByRefType())
+            throw new Exception("Aim patch parameter must exactly match the native aim vector.");
+        Console.WriteLine("Guard aim patch matches native Aim(Vector2) signature.");
         Console.WriteLine("All attack callback classification checks passed.");
         return 0;
     }
